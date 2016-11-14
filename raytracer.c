@@ -28,6 +28,9 @@ typedef struct {
   double radialA2;//default 1
   double angularA0;
   double* diffuse;
+  double reflectivity;
+  double refractivity;
+  double ior;
   double* specular;
   double theta;
 }Shape;
@@ -115,7 +118,7 @@ double quadratic(double b, double c){
   }
   double t0 = (-b-sqrt((pow(b, 2))-4*c))/2;
   double t1 = (-b+sqrt((pow(b, 2))-4*c))/2;
-  
+
   //printf("Quad a - %f, b - %f, c - %f\n", a, b, c);
   //if(t0 > 0 || t1 > 0) printf("t0 - %f, t1 - %f\n", t0, t1);
   if(t0<0) return t1;
@@ -127,7 +130,7 @@ double sphere_intersection(double* Rn, double* Rd, int k){
 
   b=2 * (Rd[0] * (Rn[0]-shapes[k].position[0]) + Rd[1] * (Rn[1]-shapes[k].position[1]) + Rd[2] * (Rn[2]-shapes[k].position[2]));
   c=(sqr(Rn[0]-shapes[k].position[0]) + sqr(Rn[1]-shapes[k].position[1]) + sqr(Rn[2]-shapes[k].position[2])-sqr(shapes[k].radius));
-  
+
   return quadratic(b, c);
 }
 
@@ -136,14 +139,14 @@ double sphere_intersection(double* Rn, double* Rd, int k){
 double plane_intersection(double* Rd, int k){
   double d, t;
   double* nPos;
-  
+
   nPos = shapes[k].normal;
   normalize(nPos);
-  
+
   d = -(nPos[0]*shapes[k].position[0] + nPos[1]*shapes[k].position[1] + nPos[2]*shapes[k].position[2]);
   if(nPos[0]*Rd[0] + nPos[1]*Rd[1] + nPos[2]*Rd[2] == 0){
     return -1;
-  }	    
+  }
   t = -d/(nPos[0]*Rd[0] + nPos[1]*Rd[1] + nPos[2]*Rd[2]);
   return t;
 }
@@ -172,9 +175,10 @@ double fang(double* rDn, int j){
 
 //Inputs - index position, object index, unit vector pointing towards point of intersection and length of intersection.
 ///caculates illumination due to lights.
-int shader(int l, int m, int k, double* Rd, double t){
-  double light_d, t_min, alpha, fRad, fAng;
-  int i, j;
+double* shader(double* Ro, double* Rd, int level){
+  double light_d, t, alpha, fRad, fAng;
+  double t_min = -1;
+  int i, j, k, closest_object;
 
   //set my color offset
   double* color = malloc(sizeof(double)*3);
@@ -182,154 +186,192 @@ int shader(int l, int m, int k, double* Rd, double t){
   color[1] = 0;//ambient_color[1]
   color[2] = 0;//ambient_color[2]
 
-  //loop through lights
-  for(j=0; j<oCount; j++){
-    if(shapes[j].type != 3){
-      //Only looking for lights
-    }else{
-      //found a light, calculate the point on the object and a vector towards the light.
-      double rOn [3];
-      rOn[0] = t * Rd[0];
-      rOn[1] = t * Rd[1];
-      rOn[2] = t * Rd[2];
-
-      double rDn [3];
-      rDn[0] = shapes[j].position[0] - rOn[0];
-      rDn[1] = shapes[j].position[1] - rOn[1];
-      rDn[2] = shapes[j].position[2] - rOn[2];
-
-      //store distance to light for t checking
-      light_d = distance(rDn);
-
-      normalize(rDn);
-
-      t_min = light_d;
-
-      //loop through objects looking for one in between point and light.
-      for(i=0; i<oCount; i++){
-	//don't want to consider the object the point is on for shading.
-	if(i == k) continue;
-	
-	if(shapes[i].type == 1){	  
-	  
-	  //find the sphere intersection.
-	  t=sphere_intersection(rOn, rDn, i);
-	  //if t is positive and lower than the distance to light, its in the way.
-	  if(t>0){
-	    if(t<t_min){
-	      t_min = t;
-	    }
-	  }
-	}else if(shapes[i].type == 2){
-	  //Send pertinent to helper function and get the t-value
-	  
-	  t = plane_intersection(rDn, i);
-	  //If t is positive and closer than distance to light, its in the way.
-	  if(t>0){
-	    if(t<t_min){ 
-	      t_min = t;
-	    }
-	  }
-	// not looking for lights
-	}else if(shapes[i].type == 3){
-	  
-	}else{
-	  fprintf(stderr, "I'm not sure what shape that is!");
-	}
-	//No object in the way
-	if(abs(t_min - light_d) < 0.00000000001){
-	  //Calculate and update color
-	  //k = intersecting object, j = light object
-	  double N[3];
-	  if(shapes[k].type == 1){
-	    //Sphere
-	    N[0] = rOn[0] - shapes[k].position[0];
-	    N[1] = rOn[1] - shapes[k].position[1];
-	    N[2] = rOn[2] - shapes[k].position[2];
-	  }else if(shapes[k].type == 2){
-	    //Plane
-	    N[0] = shapes[k].normal[0];
-	    N[1] = shapes[k].normal[1];
-	    N[2] = shapes[k].normal[2];
-	    
-	  }else{
-	    printf("What object am I hitting again?\n");
-	  }
-	  //Store L = unit vector from obj to light
-	  double L[3];
-	  L[0] = rDn[0];
-	  L[1] = rDn[1];
-	  L[2] = rDn[2];
-
-	  //Store R the reflected vector from the light vector off the object
-	  double R[3];
-	  alpha = dot(rDn, N);
-	  R[0] = rDn[0] - (2 * alpha * N[0]);
-	  R[1] = rDn[1] - (2 * alpha * N[1]);
-	  R[2] = rDn[2] - (2 * alpha * N[2]);
-
-	  //Store V, the vector from object to camera
-	  double V[3];
-	  V[0] = Rd[0];
-	  V[1] = Rd[1];
-	  V[2] = Rd[2];
-
-	  //Not normal and Obj to light vector, for diffuse calculation
-	  alpha = dot(N, L);
-
-	  
-	  //Initialize diffuse color vector
-	  double diff[3];
-	  diff[0] = 0;
-	  diff[1] = 0;
-	  diff[2] = 0;
-
-	  //calculate diffuse color
-	  diffuse_color(diff, k, j, alpha);
-	  	  
-	  alpha = dot(V, R);
-
-	  double spec[3];
-	  spec[0] = 0;
-	  spec[1] = 0;
-	  spec[2] = 0;
-
-	  //Calculate specular color
-	  specular_color(spec, k, j, alpha);
-
-	  //Calculate radial light
-	  fRad = frad(j, light_d);
-	  
-	  //Calculate angular light
-	  fAng = fang(rDn, j);
-	  
-	  //Add to color, frad(j, light_d) * fang(rDn, j) * (spec + diff)
-	  color[0] += fRad * fAng * (spec[0] + diff[0]);
-	  color[1] += fRad * fAng * (spec[1] + diff[1]);
-	  color[2] += fRad * fAng * (spec[2] + diff[2]);
-	  //Clamp color
-	  if(color[0] > 1){
-	    color[0] = 1;
-	  }
-	  if(color[1] > 1){
-	    color[1] = 1;
-	  }
-       	  if(color[2] > 1){
-	    color[2] = 1;
-	  }
-       
-	}else if(t_min < light_d){
-	  //intersection, do nothing (shadow)
-	}else{
-	  printf("Not sure what happened\n");
-	}
-      } 
-    }   
+  if(level > 6){
+    return color;
   }
-  //Add final color values to the buffer for print.
-  image.buffer[l*width+m].r=(unsigned char)(color[0]*image.range);
-  image.buffer[l*width+m].g=(unsigned char)(color[1]*image.range);
-  image.buffer[l*width+m].b=(unsigned char)(color[2]*image.range);
+
+  for(k=0; k<oCount; k++){
+    //If its a sphere, sphere intersection formula
+    if(shapes[k].type == 1){
+
+      //Get some help with quadratic functions
+      t=sphere_intersection(Rn, Rd, k);
+      //If t is positive and closer than t_min, lets paint.
+      if(t>0){
+        if(t_min == -1 || t<t_min){
+          t_min = t;
+          //set t_min and closest_object for shading
+          closest_object = k;
+        }
+      }
+    //If its a plane..
+    }else if(shapes[k].type == 2){
+      //Send pertinent to helper function and get the t-value
+      t = plane_intersection(Rd, k);
+      //If t is positive and closer than t_min, lets paint.
+      if(t>0){
+        if(t_min == -1 || t<t_min){
+          t_min = t;
+          closest_object = k;
+        //set t_min and closest object for shading
+        }
+      }
+    }else if(shapes[k].type == 3){
+
+    }else{
+      fprintf(stderr, "I'm not sure what shape that is!");
+    }
+    //printf("%d\n", k);
+    if(t_min != -1){
+      //loop through lights
+      for(j=0; j<oCount; j++){
+        if(shapes[j].type != 3){
+          //Only looking for lights
+        }else{
+          //found a light, calculate the point on the object and a vector towards the light.
+          double rOn [3];
+          rOn[0] = t * Rd[0];
+          rOn[1] = t * Rd[1];
+          rOn[2] = t * Rd[2];
+
+          double rDn [3];
+          rDn[0] = shapes[j].position[0] - rOn[0];
+          rDn[1] = shapes[j].position[1] - rOn[1];
+          rDn[2] = shapes[j].position[2] - rOn[2];
+
+          //store distance to light for t checking
+          light_d = distance(rDn);
+
+          normalize(rDn);
+
+          t_min = light_d;
+
+          //loop through objects looking for one in between point and light.
+          for(i=0; i<oCount; i++){
+    	       //don't want to consider the object the point is on for shading.
+    	        if(i == closest_object) continue;
+
+    	        if(shapes[i].type == 1){
+
+    	           //find the sphere intersection.
+    	            t=sphere_intersection(rOn, rDn, i);
+    	             //if t is positive and lower than the distance to light, its in the way.
+    	            if(t>0){
+    	               if(t<t_min){
+    	                  t_min = t;
+    	                 }
+    	                }
+    	        }else if(shapes[i].type == 2){
+    	           //Send pertinent to helper function and get the t-value
+
+    	            t = plane_intersection(rDn, i);
+    	             //If t is positive and closer than distance to light, its in the way.
+    	            if(t>0){
+              	    if(t<t_min){
+              	      t_min = t;
+              	    }
+              	  }
+    	             // not looking for lights
+    	       }else if(shapes[i].type == 3){
+
+    	       }else{
+    	          fprintf(stderr, "I'm not sure what shape that is!");
+    	         }
+    	          //No object in the way
+    	      if(abs(t_min - light_d) < 0.00000000001){
+    	         //Calculate and update color
+    	          //k = intersecting object, j = light object
+    	            double N[3];
+    	            if(shapes[k].type == 1){
+              	    //Sphere
+              	    N[0] = rOn[0] - shapes[k].position[0];
+              	    N[1] = rOn[1] - shapes[k].position[1];
+              	    N[2] = rOn[2] - shapes[k].position[2];
+              	  }else if(shapes[k].type == 2){
+              	    //Plane
+              	    N[0] = shapes[k].normal[0];
+              	    N[1] = shapes[k].normal[1];
+              	    N[2] = shapes[k].normal[2];
+
+              	  }else{
+              	    printf("What object am I hitting again?\n");
+              	  }
+    	             //Store L = unit vector from obj to light
+              	  double L[3];
+              	  L[0] = rDn[0];
+              	  L[1] = rDn[1];
+              	  L[2] = rDn[2];
+
+              	  //Store R the reflected vector from the light vector off the object
+              	  double R[3];
+              	  alpha = dot(rDn, N);
+              	  R[0] = rDn[0] - (2 * alpha * N[0]);
+              	  R[1] = rDn[1] - (2 * alpha * N[1]);
+              	  R[2] = rDn[2] - (2 * alpha * N[2]);
+
+              	  //Store V, the vector from object to camera
+              	  double V[3];
+              	  V[0] = Rd[0];
+              	  V[1] = Rd[1];
+              	  V[2] = Rd[2];
+
+              	  //Not normal and Obj to light vector, for diffuse calculation
+              	  alpha = dot(N, L);
+
+
+              	  //Initialize diffuse color vector
+              	  double diff[3];
+              	  diff[0] = 0;
+              	  diff[1] = 0;
+              	  diff[2] = 0;
+
+              	  //calculate diffuse color
+              	  diffuse_color(diff, k, j, alpha);
+
+              	  alpha = dot(V, R);
+
+              	  double spec[3];
+              	  spec[0] = 0;
+              	  spec[1] = 0;
+              	  spec[2] = 0;
+
+              	  //Calculate specular color
+              	  specular_color(spec, k, j, alpha);
+
+              	  //Calculate radial light
+              	  fRad = frad(j, light_d);
+
+              	  //Calculate angular light
+              	  fAng = fang(rDn, j);
+
+              	  //Add to color, frad(j, light_d) * fang(rDn, j) * (spec + diff)
+              	  color[0] += fRad * fAng * (spec[0] + diff[0]);
+              	  color[1] += fRad * fAng * (spec[1] + diff[1]);
+              	  color[2] += fRad * fAng * (spec[2] + diff[2]);
+              	  //Clamp color
+              	  if(color[0] > 1){
+              	    color[0] = 1;
+              	  }
+              	  if(color[1] > 1){
+              	    color[1] = 1;
+              	  }
+                     	  if(color[2] > 1){
+              	    color[2] = 1;
+              	  }
+
+              	}else if(t_min < light_d){
+              	  return color;
+              	}else{
+              	  printf("Not sure what happened\n");
+              	}
+              }
+            }
+          }
+      //Add final color values to the buffer for print.
+    }else{
+      return color;
+    }
+  }
 }
 
 
@@ -340,8 +382,6 @@ int caster(){
   image.width = width;
   image.range = 255;
   //All of the math variables
-  double t=0;
-  double t_min=-1.0;
   int closest_object = 0;
   int i, j, k;
 
@@ -359,50 +399,17 @@ int caster(){
       Rd[0] = Rn[0] - camerawidth/2+camerawidth/width*(j+0.5);
       Rd[1] = Rn[1] - cameraheight/2+cameraheight/height*(i+0.5);
       Rd[2] = 1;
-      
+
       //Normalize direction vector
       normalize(Rd);
       //Loop through all objects
-      for(k=0; k<oCount; k++){
-	//If its a sphere, sphere intersection formula
- 	if(shapes[k].type == 1){	  
-	 
-	  //Get some help with quadratic functions
-	  t=sphere_intersection(Rn, Rd, k);
-	  //If t is positive and closer than t_min, lets paint.
-	  if(t>0){
-	    if(t_min == -1 || t<t_min){
-	      t_min = t;
-	      //set t_min and closest_object for shading
-	      closest_object = k;
-	      
-	    }
-	  }
-	  //If its a plane..
-	}else if(shapes[k].type == 2){
-	  //Send pertinent to helper function and get the t-value
-	  t = plane_intersection(Rd, k);
-	  //If t is positive and closer than t_min, lets paint.
-	  if(t>0){
-	    if(t_min == -1 || t<t_min){ 
-	      t_min = t;
-	      closest_object = k;
-	      //set t_min and closest object for shading
-	    }
-	  }
-	}else if(shapes[k].type == 3){
-	  
-	}else{
-	  fprintf(stderr, "I'm not sure what shape that is!");
-	}
-      }
-      //printf("%d\n", k);
-      if(t_min != -1){
-	//printf("Shading at - %d, on Obj - %d\n", i*width+j, closest_object);
-	shader(i, j, closest_object, Rd, t_min);
-      }
+      double color[3] = shader(Rn, Rd, 1);
+      image.buffer[l*width+m].r=(unsigned char)(color[0]*image.range);
+      image.buffer[l*width+m].g=(unsigned char)(color[1]*image.range);
+      image.buffer[l*width+m].b=(unsigned char)(color[2]*image.range);
     }
   }
+
   return 0;
 }
 
@@ -430,7 +437,7 @@ void expect_c(FILE* json, int d) {
   int c = next_c(json);
   if (c == d) return;
   fprintf(stderr, "Error: Expected '%c' on line %d.\n", d, line);
-  exit(1);    
+  exit(1);
 }
 
 
@@ -452,17 +459,17 @@ char* next_string(FILE* json) {
   if (c != '"') {
     fprintf(stderr, "Error: Expected string on line %d.\n", line);
     exit(1);
-  }  
+  }
   c = next_c(json);
   int i = 0;
   while (c != '"') {
     if (i >= 128) {
       fprintf(stderr, "Error: Strings longer than 128 characters in length are not supported.\n");
-      exit(1);      
+      exit(1);
     }
     if (c == '\\') {
       fprintf(stderr, "Error: Strings with escape codes are not supported.\n");
-      exit(1);      
+      exit(1);
     }
     if (c < 32 || c > 126) {
       fprintf(stderr, "Error: Strings may contain only ascii characters.\n");
@@ -509,14 +516,14 @@ void read_scene(char* filename) {
     fprintf(stderr, "Error: Could not open file \"%s\"\n", filename);
     exit(1);
   }
-  
+
   skip_ws(json);
-  
+
   // Find the beginning of the list
   expect_c(json, '[');
-  
+
   skip_ws(json);
-  
+
   // Find the objects
   while (1) {
     c = fgetc(json);
@@ -526,22 +533,22 @@ void read_scene(char* filename) {
     }
     if (c == '{') {
       skip_ws(json);
-      
+
       // Parse the object
       char* key = next_string(json);
       if (strcmp(key, "type") != 0) {
 	fprintf(stderr, "Error: Expected \"type\" key on line number %d.\n", line);
 	exit(1);
       }
-      
+
       skip_ws(json);
-      
+
       expect_c(json, ':');
-      
+
       skip_ws(json);
-      
+
       char* value = next_string(json);
-      
+
       if (strcmp(value, "camera") == 0) {   //Set type, decrease object count for camera
 	oCount = oCount - 1;
       } else if (strcmp(value, "sphere") == 0) {
@@ -555,9 +562,9 @@ void read_scene(char* filename) {
 	fprintf(stderr, "Error: Unknown type, \"%s\", on line number %d.\n", value, line);
 	exit(1);
       }
-      
+
       skip_ws(json);
-      
+
       while (1) {
 	// , }
 	c = next_c(json);
@@ -592,7 +599,7 @@ void read_scene(char* filename) {
 	  }else if (strcmp(key, "radial-a2") == 0){
 	    shapes[oCount].radialA2 = next_number(json);
 	  }else if (strcmp(key, "radial-a1") == 0){
-	    shapes[oCount].radialA1 = next_number(json); 
+	    shapes[oCount].radialA1 = next_number(json);
 	  }else if (strcmp(key, "radial-a0") == 0){
 	    shapes[oCount].radialA0 = next_number(json);
 	  }else if (strcmp(key, "angular-a0") == 0){
@@ -603,6 +610,12 @@ void read_scene(char* filename) {
 	    shapes[oCount].specular = next_vector(json);
 	  }else if (strcmp(key, "theta") == 0){
 	    shapes[oCount].theta = next_number(json);
+    }else if (strcmp(key, "refractivity") == 0){
+      shapes[oCount].refractivity = next_number(json);
+    }else if (strcmp(key, "reflectivity") == 0){
+      shapes[oCount].reflectivity = next_number(json);
+    }else if (strcmp(key, "ior") == 0){
+      shapes[oCount].ior = next_number(json);
 	  }else{
 	    fprintf(stderr, "Error: Unknown property, \"%s\", on line %d\n",
 		    key, line);
