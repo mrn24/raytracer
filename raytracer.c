@@ -6,6 +6,7 @@
 #define NS 20
 #define PI 3.14159265
 #define CAMPOS {0, 0, 0}
+#define EPS .01
 
 typedef struct RGBpixel {
   unsigned char r, g, b;
@@ -74,6 +75,12 @@ static inline void normalize(double* v){
 
 static inline double dot(double* v, double* b){
   return (v[0]*b[0] + v[1]*b[1] + v[2]*b[2]);
+}
+
+static inline void vadd(double* v, double* b){
+  v[0] += b[0];
+  v[1] += b[1];
+  v[2] += b[2];
 }
 
 
@@ -195,7 +202,7 @@ double* shader(double* Ro, double* Rd, int level){
     if(shapes[k].type == 1){
 
       //Get some help with quadratic functions
-      t=sphere_intersection(Rn, Rd, k);
+      t=sphere_intersection(Ro, Rd, k);
       //If t is positive and closer than t_min, lets paint.
       if(t>0){
         if(t_min == -1 || t<t_min){
@@ -211,6 +218,7 @@ double* shader(double* Ro, double* Rd, int level){
       //If t is positive and closer than t_min, lets paint.
       if(t>0){
         if(t_min == -1 || t<t_min){
+          printf("Its a plane!\n");
           t_min = t;
           closest_object = k;
         //set t_min and closest object for shading
@@ -278,7 +286,7 @@ double* shader(double* Ro, double* Rd, int level){
     	          fprintf(stderr, "I'm not sure what shape that is!");
     	         }
     	          //No object in the way
-    	      if(abs(t_min - light_d) < 0.00000000001){
+    	      if(fabs(t_min - light_d) < 0.00000000001){
     	         //Calculate and update color
     	          //k = intersecting object, j = light object
     	            double N[3];
@@ -308,6 +316,8 @@ double* shader(double* Ro, double* Rd, int level){
               	  R[0] = rDn[0] - (2 * alpha * N[0]);
               	  R[1] = rDn[1] - (2 * alpha * N[1]);
               	  R[2] = rDn[2] - (2 * alpha * N[2]);
+
+                  normalize(R);
 
               	  //Store V, the vector from object to camera
               	  double V[3];
@@ -344,20 +354,38 @@ double* shader(double* Ro, double* Rd, int level){
               	  //Calculate angular light
               	  fAng = fang(rDn, j);
 
+                  alpha = dot(Rd, N);
+                  double newDirection[3];
+                  newDirection[0] = Rd[0] - (2 * alpha * N[0]);
+              	  newDirection[1] = Rd[1] - (2 * alpha * N[1]);
+              	  newDirection[2] = Rd[2] - (2 * alpha * N[2]);
+                  double newPoint[3];
+                  newPoint[0] = rOn[0] + EPS * newDirection[0];
+                  newPoint[1] = rOn[1] + EPS * newDirection[1];
+                  newPoint[2] = rOn[2] + EPS * newDirection[2];
+
               	  //Add to color, frad(j, light_d) * fang(rDn, j) * (spec + diff)
-              	  color[0] += fRad * fAng * (spec[0] + diff[0]);
-              	  color[1] += fRad * fAng * (spec[1] + diff[1]);
-              	  color[2] += fRad * fAng * (spec[2] + diff[2]);
-              	  //Clamp color
-              	  if(color[0] > 1){
-              	    color[0] = 1;
-              	  }
-              	  if(color[1] > 1){
-              	    color[1] = 1;
-              	  }
-                     	  if(color[2] > 1){
-              	    color[2] = 1;
-              	  }
+              	  color[0] = fRad * fAng * (spec[0] + diff[0]);
+              	  color[1] = fRad * fAng * (spec[1] + diff[1]);
+              	  color[2] = fRad * fAng * (spec[2] + diff[2]);
+
+
+                  double nextColor[3];
+                  nextColor[0] = 0;
+                  nextColor[1] = 0;
+                  nextColor[2] = 0;
+
+                  vadd(nextColor, shader(newPoint, newDirection, level+1));
+                  //Scale with reflectivity then add
+                  nextColor[0] *= shapes[k].reflectivity;
+                  nextColor[1] *= shapes[k].reflectivity;
+                  nextColor[2] *= shapes[k].reflectivity;
+
+
+                  vadd(color, nextColor);
+
+                  return color;
+
 
               	}else if(t_min < light_d){
               	  return color;
@@ -372,6 +400,7 @@ double* shader(double* Ro, double* Rd, int level){
       return color;
     }
   }
+  return color;
 }
 
 
@@ -393,7 +422,6 @@ int caster(){
   //Nested for loop to iterate through all the pixels
   for (i=0;i<height;i++){
     for(j=0;j<width;j++){
-      t_min = -1;
       //Pixel center
       double Rd [3];
       Rd[0] = Rn[0] - camerawidth/2+camerawidth/width*(j+0.5);
@@ -403,10 +431,25 @@ int caster(){
       //Normalize direction vector
       normalize(Rd);
       //Loop through all objects
-      double color[3] = shader(Rn, Rd, 1);
-      image.buffer[l*width+m].r=(unsigned char)(color[0]*image.range);
-      image.buffer[l*width+m].g=(unsigned char)(color[1]*image.range);
-      image.buffer[l*width+m].b=(unsigned char)(color[2]*image.range);
+      double color[3];
+      color[0] = 0;
+      color[1] = 0;
+      color[2] = 0;
+      vadd(color, shader(Rn, Rd, 1));
+      //printf("[%f %f %f]\n", color[0], color[1], color[2]);
+      //Clamp color
+      if(color[0] > 1){
+        color[0] = 1;
+      }
+      if(color[1] > 1){
+        color[1] = 1;
+      }
+      if(color[2] > 1){
+        color[2] = 1;
+      }
+      image.buffer[i*width+j].r=(unsigned char)(color[0]*image.range);
+      image.buffer[i*width+j].g=(unsigned char)(color[1]*image.range);
+      image.buffer[i*width+j].b=(unsigned char)(color[2]*image.range);
     }
   }
 
@@ -553,8 +596,14 @@ void read_scene(char* filename) {
 	oCount = oCount - 1;
       } else if (strcmp(value, "sphere") == 0) {
 	shapes[oCount].type = 1;
+  shapes[oCount].ior = 1;
+  shapes[oCount].reflectivity = 0;
+  shapes[oCount].refractivity = 0;
       } else if (strcmp(value, "plane") == 0) {
 	shapes[oCount].type = 2;
+  shapes[oCount].ior = 1;
+  shapes[oCount].reflectivity = 0;
+  shapes[oCount].refractivity = 0;
       } else if (strcmp(value, "light") == 0){
 	shapes[oCount].type = 3;
 	shapes[oCount].angularA0 = 1;

@@ -1,4 +1,4 @@
-all: illumination.c
+all: raytracer.c
 	gcc raytracer.c -o raytrace -lm
 
 clean:
