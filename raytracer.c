@@ -116,7 +116,7 @@ void diffuse_color(double* v, int k, int j, double alpha){
 void specular_color(double* v, int k, int j, double alpha){
   //Find the specular color
   ///if alpha is negative or zero, specular is zero,
-  ///else multiply the specular color, light color, and alpha sqared to the NS (constant)
+  ///else multiply the specular color, light color, and alpha raised to the NS (constant)
   if(alpha <= 0 || shapes[k].specular == NULL){
     v[0] = 0;
     v[1] = 0;
@@ -193,8 +193,8 @@ double fang(double* rDn, int j){
 
 //Inputs - index position, object index, unit vector pointing towards point of intersection and length of intersection.
 ///caculates illumination due to lights.
-double* shader(double* Ro, double* Rd, int level){
-    double light_d, t=0, alpha, fRad, fAng;
+double* shader(double* Ro, double* Rd, int level, double original_IOR){
+    double light_d, t=0, alpha, fRad, fAng, attribute;
     double t_min = -1;
     int i, j, k;
     int closest_object = -1;
@@ -202,12 +202,12 @@ double* shader(double* Ro, double* Rd, int level){
     double rOn[3];
 
     //set my color offset
-    double color[3];
-    color[0] = .1;//ambient_color[0]
-    color[1] = .1;//ambient_color[1]
-    color[2] = .1;//ambient_color[2]
+    double* color = malloc(sizeof(double)*3);
+    color[0] = 0;//ambient_color[0]
+    color[1] = 0;//ambient_color[1]
+    color[2] = 0;//ambient_color[2]
 
-      if(level > 6){
+      if(level > 7){
         return color;
     }
 
@@ -318,8 +318,13 @@ double* shader(double* Ro, double* Rd, int level){
                 }
   	          //No object in the way
                 if(fabs(t_min - light_d) < 0.00000000001){
-  	         //Calculate and update color
-  	          //closest_object = intersecting object, j = light object
+                    if((1 - shapes[closest_object].refractivity - shapes[closest_object].reflectivity) < -0.1){
+                        fprintf(stderr, "Invalid Object");
+                        exit(1);
+                    }
+                    attribute = 1 - shapes[closest_object].refractivity - shapes[closest_object].reflectivity;
+  	            //Calculate and update color
+  	             //closest_object = intersecting object, j = light object
 
   	                    //Store L = unit vector from obj to light
 
@@ -376,9 +381,9 @@ double* shader(double* Ro, double* Rd, int level){
 
 
                     //Add to color, frad(j, light_d) * fang(rDn, j) * (spec + diff)
-                    color[0] += fRad * fAng * (spec[0] + diff[0]);
-                    color[1] += fRad * fAng * (spec[1] + diff[1]);
-                    color[2] += fRad * fAng * (spec[2] + diff[2]);
+                    color[0] += attribute * fRad * fAng * (spec[0] + diff[0]);
+                    color[1] += attribute * fRad * fAng * (spec[1] + diff[1]);
+                    color[2] += attribute * fRad * fAng * (spec[2] + diff[2]);
 
 
                 }else if(t_min < light_d){
@@ -388,30 +393,55 @@ double* shader(double* Ro, double* Rd, int level){
                 }
             }
         }
-        double nextColor[3];
-        nextColor[0] = 0;
-        nextColor[1] = 0;
-        nextColor[2] = 0;
 
+        alpha = -1 * dot(Rd, N);
+        //Reflection
         if(shapes[closest_object].reflectivity != 0) {
-            alpha = dot(Rd, N);
+            double nextReflColor[3];
+            nextReflColor[0] = 0;
+            nextReflColor[1] = 0;
+            nextReflColor[2] = 0;
             double reflDirection[3];
-            reflDirection[0] = Rd[0] - (2 * alpha * N[0]);
-            reflDirection[1] = Rd[1] - (2 * alpha * N[1]);
-            reflDirection[2] = Rd[2] - (2 * alpha * N[2]);
+            reflDirection[0] = Rd[0] + (2 * alpha * N[0]);
+            reflDirection[1] = Rd[1] + (2 * alpha * N[1]);
+            reflDirection[2] = Rd[2] + (2 * alpha * N[2]);
             normalize(reflDirection);
             double reflPoint[3];
             reflPoint[0] = rOn[0] + EPS * reflDirection[0];
             reflPoint[1] = rOn[1] + EPS * reflDirection[1];
             reflPoint[2] = rOn[2] + EPS * reflDirection[2];
 
-            vadd(nextColor, shader(reflPoint, reflDirection, level + 1));
-            nextColor[0] *= shapes[closest_object].reflectivity;
-            nextColor[1] *= shapes[closest_object].reflectivity;
-            nextColor[2] *= shapes[closest_object].reflectivity;
+            vadd(nextReflColor, shader(reflPoint, reflDirection, level + 1, original_IOR));
+            nextReflColor[0] *= shapes[closest_object].reflectivity;
+            nextReflColor[1] *= shapes[closest_object].reflectivity;
+            nextReflColor[2] *= shapes[closest_object].reflectivity;
+            vadd(color, nextReflColor);
+        }
+        //Refraction
+        ///Turned off due to bugs. Going to keep working on it.
+        if(shapes[closest_object].refractivity != 0 && 1 != 1){
+            double nextRefrColor[3];
+            nextRefrColor[0] = 0;
+            nextRefrColor[1] = 0;
+            nextRefrColor[2] = 0;
+            //n = new_ior, n1 = original_IOR, n2 = shapes IOR
+            double new_ior = original_IOR/shapes[closest_object].refractivity;
+            double c2 = sqrt(1 - sqr(new_ior) * (1-sqr(alpha)));
+            double refrDirection[3];
+            refrDirection[0] = (new_ior*Rd[0]) + (new_ior*alpha-c2) * N[0];
+            refrDirection[1] = (new_ior*Rd[1]) + (new_ior*alpha-c2) * N[1];
+            refrDirection[2] = (new_ior*Rd[2]) + (new_ior*alpha-c2) * N[2];
+            double refrPoint[3];
+            refrPoint[0] = rOn[0] + EPS * refrDirection[0];
+            refrPoint[1] = rOn[1] + EPS * refrDirection[1];
+            refrPoint[2] = rOn[2] + EPS * refrDirection[2];
+            vadd(nextRefrColor, shader(refrPoint, refrDirection, level+1, new_ior));
+            nextRefrColor[0] *= shapes[closest_object].refractivity;
+            nextRefrColor[1] *= shapes[closest_object].refractivity;
+            nextRefrColor[2] *= shapes[closest_object].refractivity;
+            vadd(color, nextRefrColor);
         }
 
-        vadd(color, nextColor);
     }
     return color;
 }
@@ -442,12 +472,11 @@ int caster(){
 
       //Normalize direction vector
       normalize(Rd);
-      //Loop through all objects
       double color[3];
       color[0] = 0;
       color[1] = 0;
       color[2] = 0;
-      vadd(color, shader(Rn, Rd, 1));
+      vadd(color, shader(Rn, Rd, 1, 1.0));
       //printf("[%f %f %f]\n", color[0], color[1], color[2]);
       //Clamp color
       if(color[0] > 1){
