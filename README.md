@@ -14,4 +14,4 @@ The evolution to raytracer happened when I added recursive functionality to calc
 Usage:
 Compile with "make"
 Execution:
-"./raytrace <width> <height> <input.json> <output.ppm>"
+./raytrace width height "input.json" "output.ppm"
